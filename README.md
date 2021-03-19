@@ -49,3 +49,25 @@ $ ansible-playbook -i localhost, rhcs4-lab.yml
 
 The environment will build, register it to RHN / patch itself / enable cockpit and reboot.  When this is done log into ceph-deploy and run /root/post-install.sh, then log into cockpit on ceph-deploy.
 
+# Note
+At the time of writing there is a bug that will cause the cockpit install of ceph to fail.  The workaround is to:
+
+1. Wait till the install gets to the "waiting for quorum" tasks, and then kill the ansible-playbook running the site-container.yml playbook.
+2. run the following from ceph-deploy:
+```
+for i in ceph-{0..3}
+do
+  ssh $i sudo systemctl stop ceph-mon@$i.service
+  ssh $i sudo podman rmi -a
+  ssh $i sudo rm -rf /etc/ceph/*/var/lib/ceph/mon/ceph-$i
+done
+```
+3. modify /usr/share/ceph-ansible/group_vars/all.yml and add the following to the end of the config:
+```
+mon_host_v1:
+  enabled: false
+```
+4. restart the deployment from /usr/share/ceph-ansible:
+```
+ansible-playbook -i hosts site-container.yml
+```
