@@ -31,6 +31,18 @@ interfaces {
 ```
 
 
-I use ansible with virt-inst(1), cloud-init and genisoimage(1) to bootstrap a RHEL 8.3 cloud image and build the environment:
+I use ansible with virt-inst(1), cloud-init and genisoimage(1) to bootstrap a RHEL 8.3 cloud image and build the environment.
 
+There is an expectation that four lv devices exist and are defined in deploy_targets.item.extra_disks[] for the ceph OSD's.
+
+```
+$ sudo lvs
+  LV     VG      Attr       LSize   Pool Origin Data%  Meta%  Move Log Cpy%Sync Convert
+  ceph-0 RHELCSB -wi-ao----  16.00g                                                    
+  ceph-1 RHELCSB -wi-ao----  16.00g                                                    
+  ceph-2 RHELCSB -wi-ao----  16.00g                                                    
+  ceph-3 RHELCSB -wi-ao----  16.00g
+```
+
+Execute:
 $ ansible-playbook -i localhost, rhcs4-lab.yml
