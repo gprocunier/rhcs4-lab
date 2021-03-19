@@ -31,6 +31,6 @@ interfaces {
 ```
 
 
-I use ansible with virt-inst(1) to bootstrap the environment:
+I use ansible with virt-inst(1), cloud-init and genisoimage(1) to bootstrap a RHEL 8.3 cloud image and build the environment:
 
 $ ansible-playbook -i localhost, rhcs4-lab.yml
