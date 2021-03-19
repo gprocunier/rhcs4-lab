@@ -46,3 +46,6 @@ $ sudo lvs
 
 Execute:
 $ ansible-playbook -i localhost, rhcs4-lab.yml
+
+The environment will build, register it to RHN / patch itself / enable cockpit and reboot.  When this is done log into ceph-deploy and run /root/post-install.sh, then log into cockpit on ceph-deploy.
+
