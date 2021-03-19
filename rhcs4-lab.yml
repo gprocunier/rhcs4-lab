@@ -1,0 +1,461 @@
+---
+- name: Create a VM using a cloud image
+  hosts: '{{ host }}'
+  connection: '{{ conn_method }}'
+  vars:
+    project_dir: /home/testuser/ansible/ceph
+    images_dir: /home/testuser/images
+    guest_dir: /home/testuser/VirtualMachines
+    os: rhel8-unknown
+    # personal pubkey to access ceph-deploy
+    ssh_pubkey: '{{ lookup("file", "/home/testuser/.ssh/id_rsa.pub") }}'
+    # pubkey for deployer to access ceph nodes
+    deployer_key: '{{ lookup("file", "{{ project_dir }}/.ssh/id_rsa.pub") }}'
+    subdomain: 'idm.home.lab'
+    conn_method: '{{ "local" if host == "localhost" else "smart" }}'
+    # rhn_org: xxx
+    # rhn_key: yyy
+    deploy_targets:
+      - name: ceph-deploy
+        os: rhel8-unknown
+        base_image: '{{ guest_dir }}/rhel-8.3-x86_64-kvm.qcow2'
+        disk_size: 32G
+        memory: 4096
+        vcpus: 2
+        # the libvirt bridge my VyOS switch is on
+        network_brif: virbr1
+        extra_disk: []
+        user_data:
+          users:
+            - name: admin
+              ssh_authorized_keys:
+                - '{{ ssh_pubkey }}'
+                - '{{ deployer_key }}'
+              sudo:
+                - 'ALL=(ALL) NOPASSWD: ALL'
+              groups: sudo
+              shell: /bin/bash
+          write_files:
+            - path: /home/admin/ceph-deploy-ssh.tar.gz
+              content: '{{ lookup("file", "{{ project_dir }}/ceph-deploy-ssh.tar.gz.b64") }}'
+              permissions: 0644
+              append: false
+            - path: /home/admin/.ssh/config
+              content: |
+                Host ceph-* ceph-*.* 10.102.0.1*
+                User admin
+              permissions: 0600
+            - path: /home/admin/post-install.sh
+              content: '{{ lookup("file", "{{ project_dir }}/post-install.sh") }}'
+              permissions: 0755
+            - path: /etc/hosts
+              content: |
+                10.102.0.5    ceph-deploy.idm.home.lab ceph-deploy
+                10.102.0.10   ceph-0.idm.home.lab ceph-0
+                10.102.0.11   ceph-1.idm.home.lab ceph-1
+                10.102.0.12   ceph-2.idm.home.lab ceph-2
+                10.102.0.13   ceph-3.idm.home.lab ceph-3
+              append: true
+          runcmd:
+            - nmcli con modify "System eth0" ipv4.method disabled ipv6.method ignore
+            - nmcli con up "System eth0"
+            - nmcli con add 
+              type vlan 
+              con-name vlan102 
+              ifname vlan102 
+              dev eth0 
+              id 102 
+              ipv6.method ignore
+              ipv4.method manual
+              ipv4.address 10.102.0.5/24
+              ipv4.gateway 10.102.0.1
+              ipv4.dns 10.0.0.1
+            - nmcli con up vlan102
+            - echo redhat | passwd --stdin admin
+            - subscription-manager register --org {{ rhn_org }} --activationkey={{ rhn_key }} --force
+            - subscription-manager repos 
+              --enable=rhceph-4-tools-for-rhel-8-x86_64-rpms 
+              --enable=ansible-2.9-for-rhel-8-x86_64-rpms
+            - dnf -y update
+            - dnf -y install cockpit-ceph-installer
+            - base64 -d /home/admin/ceph-deploy-ssh.tar.gz | tar -zxvf - -C /home/admin
+            - chown -R admin:admin /home/admin
+            - systemctl enable cockpit.socket
+            - reboot
+      - name: ceph-0
+        os: rhel8-unknown
+        base_image: '{{ guest_dir }}/rhel-8.3-x86_64-kvm.qcow2'
+        disk_size: 32G
+        memory: 4096
+        vcpus: 2
+        network_brif: virbr1
+        extra_disk:
+          - /dev/RHELCSB/ceph-0
+        user_data:
+          users:
+            - name: admin
+              ssh_authorized_keys:
+                - '{{ ssh_pubkey }}'
+                - '{{ deployer_key }}'
+              sudo:
+                - 'ALL=(ALL) NOPASSWD: ALL'
+              groups: sudo
+              shell: /bin/bash
+          write_files:
+            - path: /etc/rc.d/rc.local
+              content: |
+                echo 0 >/sys/class/block/sda/queue/rotational
+              append: true
+            - path: /etc/hosts
+              content: |
+                10.102.0.5    ceph-deploy.idm.home.lab ceph-deploy
+                10.102.0.10   ceph-0.idm.home.lab ceph-0
+                10.102.0.11   ceph-1.idm.home.lab ceph-1
+                10.102.0.12   ceph-2.idm.home.lab ceph-2
+                10.102.0.13   ceph-3.idm.home.lab ceph-3
+              append: true
+          runcmd:
+            - nmcli con modify "System eth0" ipv4.method disabled ipv6.method ignore
+            - nmcli con up "System eth0"
+            - nmcli con add 
+              type vlan 
+              con-name vlan102 
+              ifname vlan102 
+              dev eth0 
+              id 102 
+              ipv6.method ignore
+              ipv4.method manual
+              ipv4.address 10.102.0.10/24
+              ipv4.gateway 10.102.0.1
+              ipv4.dns 10.0.0.1
+              ipv4.routes "0.0.0.0/1 10.102.0.1 table=5000, 128.0.0.0/1 10.102.0.1 table=5000"
+              ipv4.routing-rules "priority 5 from 10.102.0.0/24 table 5000"
+            - nmcli con add 
+              type vlan 
+              con-name vlan103 
+              ifname vlan103 
+              dev eth0 
+              id 103
+              ipv6.method ignore
+              ipv4.method manual
+              ipv4.address 10.103.0.10/24
+              ipv4.routes "0.0.0.0/1 10.103.0.1 table=5001, 128.0.0.0/1 10.103.0.1 table=5001"
+              ipv4.routing-rules "priority 5 from 10.103.0.0/24 table 5001"
+            - nmcli con up vlan102
+            - nmcli con up vlan103
+            - subscription-manager register --org {{ rhn_org }} --activationkey={{ rhn_key }} --force
+            - dnf -y update
+            - chmod +x /etc/rc.d/rc.local
+            - systemctl enable cockpit.socket
+            - reboot
+      - name: ceph-1
+        os: rhel8-unknown
+        base_image: '{{ guest_dir }}/rhel-8.3-x86_64-kvm.qcow2'
+        disk_size: 32G
+        memory: 4096
+        vcpus: 2
+        network_brif: virbr1
+        extra_disk:
+          - /dev/RHELCSB/ceph-1
+        user_data:
+          users:
+            - name: admin
+              ssh_authorized_keys:
+                - '{{ ssh_pubkey }}'
+                - '{{ deployer_key }}'
+              sudo:
+                - 'ALL=(ALL) NOPASSWD: ALL'
+              groups: sudo
+              shell: /bin/bash
+          write_files:
+            - path: /etc/rc.d/rc.local
+              content: |
+                echo 0 >/sys/class/block/sda/queue/rotational
+              append: true
+            - path: /etc/hosts
+              content: |
+                10.102.0.5    ceph-deploy.idm.home.lab ceph-deploy
+                10.102.0.10   ceph-0.idm.home.lab ceph-0
+                10.102.0.11   ceph-1.idm.home.lab ceph-1
+                10.102.0.12   ceph-2.idm.home.lab ceph-2
+                10.102.0.13   ceph-3.idm.home.lab ceph-3
+              append: true
+          runcmd:
+            - nmcli con modify "System eth0" ipv4.method disabled ipv6.method ignore
+            - nmcli con up "System eth0"
+            - nmcli con add 
+              type vlan 
+              con-name vlan102 
+              ifname vlan102 
+              dev eth0 
+              id 102 
+              ipv6.method ignore
+              ipv4.method manual
+              ipv4.address 10.102.0.11/24
+              ipv4.gateway 10.102.0.1
+              ipv4.dns 10.0.0.1
+              ipv4.routes "0.0.0.0/1 10.102.0.1 table=5000, 128.0.0.0/1 10.102.0.1 table=5000"
+              ipv4.routing-rules "priority 5 from 10.102.0.0/24 table 5000"
+            - nmcli con add 
+              type vlan 
+              con-name vlan103 
+              ifname vlan103 
+              dev eth0 
+              id 103
+              ipv6.method ignore
+              ipv4.method manual
+              ipv4.address 10.103.0.11/24
+              ipv4.routes "0.0.0.0/1 10.103.0.1 table=5001, 128.0.0.0/1 10.103.0.1 table=5001"
+              ipv4.routing-rules "priority 5 from 10.103.0.0/24 table 5001"
+            - nmcli con up vlan102
+            - nmcli con up vlan103
+            - subscription-manager register --org {{ rhn_org }} --activationkey={{ rhn_key }} --force
+            - dnf -y update
+            - chmod +x /etc/rc.d/rc.local
+            - systemctl enable cockpit.socket
+            - reboot
+      - name: ceph-2
+        os: rhel8-unknown
+        base_image: '{{ guest_dir }}/rhel-8.3-x86_64-kvm.qcow2'
+        disk_size: 32G
+        memory: 4096
+        vcpus: 2
+        network_brif: virbr1
+        extra_disk:
+          - /dev/RHELCSB/ceph-2
+        user_data:
+          users:
+            - name: admin
+              ssh_authorized_keys:
+                - '{{ ssh_pubkey }}'
+                - '{{ deployer_key }}'
+              sudo:
+                - 'ALL=(ALL) NOPASSWD: ALL'
+              groups: sudo
+              shell: /bin/bash
+          write_files:
+            - path: /etc/rc.d/rc.local
+              content: |
+                echo 0 >/sys/class/block/sda/queue/rotational
+              append: true
+            - path: /etc/hosts
+              content: |
+                10.102.0.5    ceph-deploy.idm.home.lab ceph-deploy
+                10.102.0.10   ceph-0.idm.home.lab ceph-0
+                10.102.0.11   ceph-1.idm.home.lab ceph-1
+                10.102.0.12   ceph-2.idm.home.lab ceph-2
+                10.102.0.13   ceph-3.idm.home.lab ceph-3
+              append: true
+          runcmd:
+            - nmcli con modify "System eth0" ipv4.method disabled ipv6.method ignore
+            - nmcli con up "System eth0"
+            - nmcli con add 
+              type vlan 
+              con-name vlan102 
+              ifname vlan102 
+              dev eth0 
+              id 102 
+              ipv6.method ignore
+              ipv4.method manual
+              ipv4.address 10.102.0.12/24
+              ipv4.gateway 10.102.0.1
+              ipv4.dns 10.0.0.1
+              ipv4.routes "0.0.0.0/1 10.102.0.1 table=5000, 128.0.0.0/1 10.102.0.1 table=5000"
+              ipv4.routing-rules "priority 5 from 10.102.0.0/24 table 5000"
+            - nmcli con add 
+              type vlan 
+              con-name vlan103 
+              ifname vlan103 
+              dev eth0 
+              id 103
+              ipv6.method ignore
+              ipv4.method manual
+              ipv4.address 10.103.0.12/24
+              ipv4.routes "0.0.0.0/1 10.103.0.1 table=5001, 128.0.0.0/1 10.103.0.1 table=5001"
+              ipv4.routing-rules "priority 5 from 10.103.0.0/24 table 5001"
+            - nmcli con up vlan102
+            - nmcli con up vlan103
+            - subscription-manager register --org {{ rhn_org }} --activationkey={{ rhn_key }} --force
+            - dnf -y update
+            - chmod +x /etc/rc.d/rc.local
+            - systemctl enable cockpit.socket
+            - reboot
+      - name: ceph-3
+        os: rhel8-unknown
+        base_image: '{{ guest_dir }}/rhel-8.3-x86_64-kvm.qcow2'
+        disk_size: 32G
+        memory: 4096
+        vcpus: 2
+        network_brif: virbr1
+        extra_disk:
+          - /dev/RHELCSB/ceph-3
+        user_data:
+          users:
+            - name: admin
+              ssh_authorized_keys:
+                - '{{ ssh_pubkey }}'
+                - '{{ deployer_key }}'
+              sudo:
+                - 'ALL=(ALL) NOPASSWD: ALL'
+              groups: sudo
+              shell: /bin/bash
+          write_files:
+            - path: /etc/rc.d/rc.local
+              content: |
+                echo 0 >/sys/class/block/sda/queue/rotational
+              append: true
+            - path: /etc/hosts
+              content: |
+                10.102.0.5    ceph-deploy.idm.home.lab ceph-deploy
+                10.102.0.10   ceph-0.idm.home.lab ceph-0
+                10.102.0.11   ceph-1.idm.home.lab ceph-1
+                10.102.0.12   ceph-2.idm.home.lab ceph-2
+                10.102.0.13   ceph-3.idm.home.lab ceph-3
+              append: true
+          runcmd:
+            - nmcli con modify "System eth0" ipv4.method disabled ipv6.method ignore
+            - nmcli con up "System eth0"
+            - nmcli con add 
+              type vlan 
+              con-name vlan102 
+              ifname vlan102 
+              dev eth0 
+              id 102 
+              ipv6.method ignore
+              ipv4.method manual
+              ipv4.address 10.102.0.13/24
+              ipv4.gateway 10.102.0.1
+              ipv4.dns 10.0.0.1
+              ipv4.routes "0.0.0.0/1 10.102.0.1 table=5000, 128.0.0.0/1 10.102.0.1 table=5000"
+              ipv4.routing-rules "priority 5 from 10.102.0.0/24 table 5000"
+            - nmcli con add 
+              type vlan 
+              con-name vlan103 
+              ifname vlan103 
+              dev eth0 
+              id 103
+              ipv6.method ignore
+              ipv4.method manual
+              ipv4.address 10.103.0.13/24
+              ipv4.routes "0.0.0.0/1 10.103.0.1 table=5001, 128.0.0.0/1 10.103.0.1 table=5001"
+              ipv4.routing-rules "priority 5 from 10.103.0.0/24 table 5001"
+            - nmcli con up vlan102
+            - nmcli con up vlan103
+            - subscription-manager register --org {{ rhn_org }} --activationkey={{ rhn_key }} --force
+            - dnf -y update
+            - chmod +x /etc/rc.d/rc.local
+            - systemctl enable cockpit.socket
+            - reboot
+
+  vars_prompt:
+    - name: host
+      prompt: VM Host
+      private: no
+      default: localhost
+    - name: ansible_become_pass
+      prompt: "SUDO password"
+      private: yes
+    - name: rhn_org
+      promt: RHN Organization ID
+      private: no
+      default: '{{ rhn_org }}'
+    - name: rhn_key
+      prompt: RHN Activation Key
+      private: no
+      default: '{{ rhn_key }}'
+  tasks:
+    - name: Create images directory
+      file:
+        path: '{{ images_dir }}/{{ item.name }}'
+        state: directory
+      with_items: '{{ deploy_targets }}'
+      no_log: true
+
+    - file:
+        path: '{{ guest_dir }}/{{ item.name }}.qcow2'
+        state: absent
+      with_items: '{{ deploy_targets }}'
+      no_log: true
+
+    - name: Create VM image from base image
+      command: qemu-img create -b {{ item.base_image }} -f qcow2 -F qcow2 {{ guest_dir }}/{{ item.name }}.qcow2 {{ item.disk_size }}
+      with_items: '{{ deploy_targets }}'
+      no_log: true
+
+    - file:
+        path: '{{ images_dir }}/{{ item.name }}/meta-data'
+        state: absent
+      with_items: '{{ deploy_targets }}'
+      no_log: true
+
+    - name: Create meta-data
+      copy:
+        content: '{{ metadata | default({}) | combine({ "instance-id": fqdn, "local-hostname": fqdn }) | to_nice_yaml }}'
+        dest: '{{ images_dir }}/{{ item.name }}/meta-data'
+      vars:
+        metadata: {}
+        fqdn: '{{ item.name }}.{{ subdomain }}'
+      with_items: '{{ deploy_targets }}'
+      no_log: true
+
+    - file:
+        path: '{{ images_dir }}/{{ item.name }}/user-data'
+        state: absent
+      with_items: '{{ deploy_targets }}'
+      no_log: true
+
+    - name: Create user-data
+      copy:
+        content: '{{ item.user_data | to_nice_yaml }}'
+        dest: '{{ images_dir }}/{{ item.name }}/user-data'
+      with_items: '{{ deploy_targets }}'
+      no_log: true
+
+    - lineinfile:
+        path: '{{ images_dir }}/{{ item.name }}/user-data'
+        insertbefore: BOF
+        line: "#cloud-config"
+      with_items: '{{ deploy_targets }}'
+      no_log: true
+
+    - file:
+        path: '{{ images_dir }}/{{ item.name }}/{{ item.name }}-cidata.iso'
+        state: absent
+      with_items: '{{ deploy_targets }}'
+      no_log: true
+
+    - name: Create cloud-init configuration image
+      command: genisoimage -output {{ images_dir }}/{{ item.name }}/{{ item.name }}-cidata.iso -V cidata -r -J {{ images_dir }}/{{ item.name }}/user-data {{ images_dir }}/{{ item.name }}/meta-data
+      with_items: '{{ deploy_targets }}'
+      no_log: true
+
+    - name: Scrub the osd volumes
+      command: |
+        {% for disk in item.extra_disk %}
+          dd if=/dev/zero of={{ disk }} bs=1M count=100 oflag=direct status=progress
+        {% endfor %}
+      become: true
+      with_items: '{{ deploy_targets }}'
+      when: item.name != 'ceph-deploy'
+      tags: scrub
+      no_log: true
+
+    - name: Create the VM
+      command: |
+        virt-install
+        --name={{ item.name }} 
+        --ram={{ item.memory }} 
+        --vcpus={{ item.vcpus }} 
+        --import 
+        --disk path={{ guest_dir }}/{{ item.name }}.qcow2,format=qcow2 
+        --disk path={{ images_dir }}/{{ item.name }}/{{ item.name }}-cidata.iso,device=cdrom 
+        {% for disk in item.extra_disk %}
+          --disk {{ disk }},bus=scsi,discard=unmap
+        {% endfor %}
+        --os-variant {{ item.os }} 
+        --network bridge={{ item.network_brif }},model=virtio 
+        --graphics vnc,listen=0.0.0.0 
+        --noautoconsole
+      become: true
+      with_items: '{{ deploy_targets }}'
+      no_log: true
