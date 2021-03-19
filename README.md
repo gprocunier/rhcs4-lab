@@ -29,3 +29,8 @@ interfaces {
     }
 }
 ```
+
+
+I use ansible with virt-inst(1) to bootstrap the environment:
+
+$ ansible-playbook -i localhost, rhcs4-lab.yml
